@@ -1,9 +1,3 @@
-# Here lie dragons!
-#
-# This action either builds the server or
-# builds a paperclip jar to be updated in the body
-# of the PR relating to this action.
-
 name: Build Paper
 on:
   push:
@@ -29,12 +23,10 @@ jobs:
         java: [21]
       fail-fast: true
     steps:
-      - if: ${{ github.event_name == 'push' }}
-        uses: actions/checkout@v4
-      - if: ${{ github.event_name == 'pull_request' }}
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+
       - name: JDK ${{ matrix.java }}
         uses: actions/setup-java@v4
         with:
@@ -69,19 +61,16 @@ jobs:
               if (pull) {
                 result["pr"] = pull.number;
                 result["action"] = "paperclip";
-                core.notice(`This is a push action but to a branch with an open PR with the build paperclip label (${JSON.stringify(result)})`);
                 return result;
               }
             } else if (event_name === "pull_request" && event.pull_request.labels.find((l) => l.name === "build-pr-jar")) {
               result["pr"] = event.pull_request.number;
               result["action"] = "paperclip";
-              core.notice(`This is a pull request action with a build paperclip label (${JSON.stringify(result)})`);
               return result;
             }
-            core.notice("This will not build a paperclip jar");
             return result;
 
-      - name: Grant execute permission for gradlew
+      - name: Grant permission for gradlew
         run: chmod +x ./gradlew
 
       - name: Apply Patches
@@ -103,14 +92,28 @@ jobs:
 
       - name: Create Paperclip Jar
         if: fromJSON(steps.determine.outputs.result).action == 'paperclip'
-        run: ./gradlew createMojmapPaperclipJar --stacktrace
+        run: |
+          mkdir -p builds
+          ./gradlew createMojmapPaperclipJar --stacktrace
+          cp paper-server/build/libs/paper-paperclip-*-mojmap.jar builds/
 
-      - name: Upload Paperclip Jar
+      - name: Upload Paperclip Jar Artifact
         if: fromJSON(steps.determine.outputs.result).action == 'paperclip'
         uses: actions/upload-artifact@v4
         with:
           name: paper-${{ fromJSON(steps.determine.outputs.result).pr }}
-          path: paper-server/build/libs/paper-paperclip-*-mojmap.jar
+          path: builds/paper-paperclip-*-mojmap.jar
+
+      - name: Release (Pre-release)
+        if: fromJSON(steps.determine.outputs.result).action == 'paperclip'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "pr-${{ fromJSON(steps.determine.outputs.result).pr }}"
+          name: "PR Build #${{ fromJSON(steps.determine.outputs.result).pr }}"
+          prerelease: true
+          files: builds/paper-paperclip-*-mojmap.jar
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   event_file:
     name: "Event File"
